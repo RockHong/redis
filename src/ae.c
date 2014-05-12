@@ -81,7 +81,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     for (i = 0; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
     return eventLoop;
-
+/* hong: simple goto is ok */
 err:
     if (eventLoop) {
         zfree(eventLoop->events);
