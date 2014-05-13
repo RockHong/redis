@@ -69,7 +69,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->fired = zmalloc(sizeof(aeFiredEvent)*setsize);
     if (eventLoop->events == NULL || eventLoop->fired == NULL) goto err;
     eventLoop->setsize = setsize;
-    eventLoop->lastTime = time(NULL);
+    eventLoop->lastTime = time(NULL); /* hong: current time as time_t */
     eventLoop->timeEventHead = NULL;
     eventLoop->timeEventNextId = 0;
     eventLoop->stop = 0;
@@ -108,6 +108,7 @@ int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
 
     if (setsize == eventLoop->setsize) return AE_OK;
     if (eventLoop->maxfd >= setsize) return AE_ERR;
+    /* hong: by including different file, xxApixx() will link to different implementation */
     if (aeApiResize(eventLoop,setsize) == -1) return AE_ERR;
 
     eventLoop->events = zrealloc(eventLoop->events,sizeof(aeFileEvent)*setsize);
@@ -132,10 +133,12 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
+/* hong: add a file event */
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
     if (fd >= eventLoop->setsize) {
+    	/* hong: man errno, ERANGE - result too large; #include <errno.h> */
         errno = ERANGE;
         return AE_ERR;
     }
@@ -181,6 +184,8 @@ static void aeGetTime(long *seconds, long *milliseconds)
 {
     struct timeval tv;
 
+    /* hong: not need timezon, so pass NULL to 2nd para. 1st para contains
+    second and microsecond. for second, it's the same value as that of time(NULL) */
     gettimeofday(&tv, NULL);
     *seconds = tv.tv_sec;
     *milliseconds = tv.tv_usec/1000;
