@@ -37,6 +37,7 @@
 
 /* Flags used with certain functions. */
 #define ANET_NONE 0
+/* hong: what's the purpose of 1<<0 ?? */
 #define ANET_IP_ONLY (1<<0)
 
 #if defined(__sun)
