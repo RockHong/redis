@@ -219,6 +219,7 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
+    /* hong: add to the front of linked list */
     te->next = eventLoop->timeEventHead;
     eventLoop->timeEventHead = te;
     return id;
@@ -365,6 +366,10 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
+     /* hong: calculate how much time we can wait when calling aeApiPoll(), this value
+     is stored in variable tvp.
+     if we have time event waiting to fire, then we calculate the time before the nearest 
+     time event, and wait that amount of time when calling aeApiPoll()*/
     if (eventLoop->maxfd != -1 ||
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
@@ -417,6 +422,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
             }
             if (fe->mask & mask & AE_WRITABLE) {
+            	/* hong: why have '!rfired' condition?? if rfileProc() fired on a fd,
+            	then we don't fire the wfileProc() for the fd. what's the reason ?? */
                 if (!rfired || fe->wfileProc != fe->rfileProc)
                     fe->wfileProc(eventLoop,fd,fe->clientData,mask);
             }
@@ -444,7 +451,18 @@ int aeWait(int fd, int mask, long long milliseconds) {
     if ((retval = poll(&pfd, 1, milliseconds))== 1) {
         if (pfd.revents & POLLIN) retmask |= AE_READABLE;
         if (pfd.revents & POLLOUT) retmask |= AE_WRITABLE;
+        /* hong: POLLERR , error happened */
 	if (pfd.revents & POLLERR) retmask |= AE_WRITABLE;
+	/* hong: it seems POLLHUP is relative to fd close or EOF
+	from http://www.greenend.org.uk/rjk/tech/poll.html :
+	...A reasonable question to ask is: what does it do when a file descriptor reaches EOF (end of file)? 
+	Should it set POLLIN (as one might expect from select()), POLLHUP, or both? ...
+	different OS & implementation answer differently...
+	...The lesson for authors of portable code is clear: test for both POLLIN and POLLHUP, 
+	and rely on the subsequent read() to tell you whether you reached EOF...
+	and, other link http://www.makelinux.net/ldd3/chp-6-sect-3 ...
+	
+	but why we get POLLHUP from poll(), but set retmask with AE_WRITABLE ??? */
         if (pfd.revents & POLLHUP) retmask |= AE_WRITABLE;
         return retmask;
     } else {
