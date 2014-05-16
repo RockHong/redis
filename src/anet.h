@@ -40,6 +40,8 @@
 /* hong: what's the purpose of 1<<0 ?? */
 #define ANET_IP_ONLY (1<<0)
 
+/* hong: AF_UNIX, for unix domain socket. AF stands for 'address family'.
+ * sometimes, PF_UNIX might be used. PF means 'protocol family. */
 #if defined(__sun)
 #define AF_LOCAL AF_UNIX
 #endif

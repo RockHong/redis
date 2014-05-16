@@ -53,6 +53,8 @@ static void anetSetError(char *err, const char *fmt, ...)
 
     if (!err) return;
     va_start(ap, fmt);
+    /* hong: v for variable argu? s for string? n for buf-size limit? vsnprintf(),
+     * using version with buf-size limit is more safe.*/
     vsnprintf(err, ANET_ERR_LEN, fmt, ap);
     va_end(ap);
 }
