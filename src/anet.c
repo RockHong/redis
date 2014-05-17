@@ -66,10 +66,13 @@ int anetNonBlock(char *err, int fd)
     /* Set the socket non-blocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
+    /* hong: 1) use fcntl() to retrive open file status flags, F_GETFL
+     * 2) use strerror() to get string of errno */
     if ((flags = fcntl(fd, F_GETFL)) == -1) {
         anetSetError(err, "fcntl(F_GETFL): %s", strerror(errno));
         return ANET_ERR;
     }
+    /* hong: set socket as nonblocking. tlpi p103 s5.9 */
     if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
         anetSetError(err, "fcntl(F_SETFL,O_NONBLOCK): %s", strerror(errno));
         return ANET_ERR;
@@ -84,12 +87,23 @@ int anetKeepAlive(char *err, int fd, int interval)
 {
     int val = 1;
 
+    /* hong: 1) for keepalive, see http://www.tldp.org/HOWTO/html_single/TCP-Keepalive-HOWTO/
+     * it maybe an old doc, not sure. keepalive is to deteck connect is not broken..
+     * 2) for setsockopt(), see man or tlpi p1278. SOL_SOCKET means SO_KEEPALIVE is set
+     * on all socket API level. val = 1 means turn on the option */
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1)
     {
         anetSetError(err, "setsockopt SO_KEEPALIVE: %s", strerror(errno));
         return ANET_ERR;
     }
 
+    /* hong:1) the default value of 3 keepalive options in linux is too large.
+     * sending out probe after 2 hours may leave two many fds in system.
+     * for TCP_KEEPIDLE/TCP_KEEPINTVL/TCP_KEEPCNT, see 
+     * http://www.tldp.org/HOWTO/html_single/TCP-Keepalive-HOWTO/
+     * 2) because keepalive is kind of TCP thing, so set the level to IPPROTO_TCP.
+     * see IPPROTO_TCP in man 3 getsockopt
+     */
 #ifdef __linux__
     /* Default settings are more or less garbage, with the keepalive time
      * set to 7200 by default on Linux. Modify settings to make the feature
