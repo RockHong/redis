@@ -140,6 +140,13 @@ int anetKeepAlive(char *err, int fd, int interval)
 
 static int anetSetTcpNoDelay(char *err, int fd, int val)
 {
+    /* hong: TCP_NODELAY, see in man 7 tcp. if set, disable the Nagle algorithm.
+     * segments will sent ASAP.
+     * there is relative option called TCP_CORK. see in man 7 tcp and tlpi p1262.
+     *
+     * this option is performed per socket-wise, if you need system-wide(seems not recommend)
+     * see http://stackoverflow.com/questions/17842406/how-would-one-disable-nagles-algorithm-in-linux
+     * */
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) == -1)
     {
         anetSetError(err, "setsockopt TCP_NODELAY: %s", strerror(errno));
@@ -161,6 +168,8 @@ int anetDisableTcpNoDelay(char *err, int fd)
 
 int anetSetSendBuffer(char *err, int fd, int buffsize)
 {
+    /* hong: for SO_SNDBUF, see man 7 socket. set max socket send buffer in bytes.
+     * also see tlpi p1171 */
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buffsize, sizeof(buffsize)) == -1)
     {
         anetSetError(err, "setsockopt SO_SNDBUF: %s", strerror(errno));
@@ -193,22 +202,32 @@ int anetGenericResolve(char *err, char *host, char *ipbuf, size_t ipbuf_len,
     int rv;
 
     memset(&hints,0,sizeof(hints));
+    /* hong: tlpi p1216, AI_NUMERICHOST, @host is ip string, no need to resolve name.*/
     if (flags & ANET_IP_ONLY) hints.ai_flags = AI_NUMERICHOST;
+    /* hong: AF_UNSPEC means we want both ipv4&v6. other value are AF_INET AF_INET6 */
     hints.ai_family = AF_UNSPEC;
+    /* hong: only tcp */
     hints.ai_socktype = SOCK_STREAM;  /* specify socktype to avoid dups */
 
     if ((rv = getaddrinfo(host, NULL, &hints, &info)) != 0) {
         anetSetError(err, "%s", gai_strerror(rv));
         return ANET_ERR;
     }
+    /* hong: getaddrinfo() returns a list of 'struct addrinfo'. here we just use the 
+     * first one...
+     *
+     * info->ai_addr is 'struct sockaddr' type. 'struct sockaddr' is big enough to contain
+     * address structures of any type. tlpi p1154 s56.4 */
     if (info->ai_family == AF_INET) {
         struct sockaddr_in *sa = (struct sockaddr_in *)info->ai_addr;
+        /* hong: tlpi s59.6 convert from binary form to dotted-decimal or hex-string notation */
         inet_ntop(AF_INET, &(sa->sin_addr), ipbuf, ipbuf_len);
     } else {
         struct sockaddr_in6 *sa = (struct sockaddr_in6 *)info->ai_addr;
         inet_ntop(AF_INET6, &(sa->sin6_addr), ipbuf, ipbuf_len);
     }
 
+    /* hong: remember to free!!! */
     freeaddrinfo(info);
     return ANET_OK;
 }
@@ -225,6 +244,7 @@ static int anetSetReuseAddr(char *err, int fd) {
     int yes = 1;
     /* Make sure connection-intensive things like the redis benckmark
      * will be able to close/open sockets a zillion of times */
+    /* hong: tlpi s61.10 p1279 */
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt SO_REUSEADDR: %s", strerror(errno));
         return ANET_ERR;
@@ -277,6 +297,7 @@ static int anetTcpGenericConnect(char *err, char *addr, int port, int flags)
         if (connect(s,p->ai_addr,p->ai_addrlen) == -1) {
             /* If the socket is non-blocking, it is ok for connect() to
              * return an EINPROGRESS error here. */
+            /* hong: for EINPROGRESS, see man 2 connect */
             if (errno == EINPROGRESS && flags & ANET_CONNECT_NONBLOCK)
                 goto end;
             close(s);
@@ -354,6 +375,7 @@ int anetRead(int fd, char *buf, int count)
     int nread, totlen = 0;
     while(totlen != count) {
         nread = read(fd,buf,count-totlen);
+        /* hong: returning 0 means EOF. see man 2 read. */
         if (nread == 0) return totlen;
         if (nread == -1) return -1;
         totlen += nread;
@@ -394,6 +416,7 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int 
 
 static int anetV6Only(char *err, int s) {
     int yes = 1;
+    /* hong: man 7 ipv6 */
     if (setsockopt(s,IPPROTO_IPV6,IPV6_V6ONLY,&yes,sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt: %s", strerror(errno));
         close(s);
@@ -412,6 +435,7 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
     memset(&hints,0,sizeof(hints));
     hints.ai_family = af;
     hints.ai_socktype = SOCK_STREAM;
+    /* hong: tlpi p1216 */
     hints.ai_flags = AI_PASSIVE;    /* No effect if bindaddr != NULL */
 
     if ((rv = getaddrinfo(bindaddr,_port,&hints,&servinfo)) != 0) {
@@ -472,6 +496,7 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     while(1) {
         fd = accept(s,sa,len);
         if (fd == -1) {
+            /* hong: man 2 accept, interrupt by signal */
             if (errno == EINTR)
                 continue;
             else {
@@ -486,14 +511,28 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
 
 int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     int fd;
+    /* hong: tlpi s59.4 p1204, sockaddr_storage is enough to hold ipv4 & ipv6 'socket address'
+     * 'socket address' contain ip addr(struct in_addr/in6_addr), port and others
+     *
+     * from http://stackoverflow.com/questions/8835322/api-using-sockaddr-storage
+     * it seems that 'struct sockaddr' is not big enough to hold sockaddr_in6,
+     * so 'struct sockaddr_storage' is created.
+     * from above link, even though 'struct sockaddr' is not big enough, we still use a 
+     * 'struct sockaddr' pointer in API calls like:
+     * sendto(sock, buffer, len, 0, (sockaddr*)&addr, sizeof(sockaddr_in6));
+     * (that is we still need to cast a 'struct sockaddr_storage' into a 
+     * 'struct sockaddr' pointer
+     */
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
+    /* hong: accept() will return peer socket addr into its 2nd and 3rd para */
     if ((fd = anetGenericAccept(err,s,(struct sockaddr*)&sa,&salen)) == ANET_ERR)
         return ANET_ERR;
 
     if (sa.ss_family == AF_INET) {
         struct sockaddr_in *s = (struct sockaddr_in *)&sa;
         if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);
+        /* hong: ntohs(), network to host, short */
         if (port) *port = ntohs(s->sin_port);
     } else {
         struct sockaddr_in6 *s = (struct sockaddr_in6 *)&sa;
@@ -517,6 +556,7 @@ int anetPeerToString(int fd, char *ip, size_t ip_len, int *port) {
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
 
+    /* hong: use getpeername() to get peer addr; use getsockname() to get local addr */
     if (getpeername(fd,(struct sockaddr*)&sa,&salen) == -1) {
         if (port) *port = 0;
         ip[0] = '?';
@@ -539,6 +579,7 @@ int anetSockName(int fd, char *ip, size_t ip_len, int *port) {
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
 
+    /* hong: use getpeername() to get peer addr; use getsockname() to get local addr */
     if (getsockname(fd,(struct sockaddr*)&sa,&salen) == -1) {
         if (port) *port = 0;
         ip[0] = '?';
