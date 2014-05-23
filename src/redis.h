@@ -520,7 +520,9 @@ typedef struct zskiplistNode {
     struct zskiplistLevel {
         struct zskiplistNode *forward;
         unsigned int span;
-    } level[];
+    } level[];/* hong: it's 'flexible array member' feature new from c99, see discussion 
+                 http://stackoverflow.com/questions/246977/flexible-array-members-in-c-bad
+                 http://stackoverflow.com/questions/17185247/c-struct-array-member-without-specific-length */
 } zskiplistNode;
 
 typedef struct zskiplist {
